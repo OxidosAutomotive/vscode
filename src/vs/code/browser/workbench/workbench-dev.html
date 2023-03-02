@@ -29,10 +29,27 @@
 		<link rel="icon" href="{{WORKBENCH_WEB_BASE_URL}}/resources/server/favicon.ico" type="image/x-icon" />
 		<link rel="manifest" href="{{WORKBENCH_WEB_BASE_URL}}/resources/server/manifest.json" crossorigin="use-credentials" />
 
+		<!-- Preloader Style -->
+		<link rel="stylesheet" href="{{WORKBENCH_WEB_BASE_URL}}/out/vs/code/browser/workbench/preloader/main.css">
 	</head>
 
 	<body aria-label="">
+		<div id="preloader">
+			<h1>Loading
+				<div class="dots">
+					<span class="dot z"></span>
+					<span class="dot f"></span>
+					<span class="dot s"></span>
+					<span class="dot t">
+						<span class="dot l"></span>
+					</span>
+				</div>
+			</h1>
+		</div>
 	</body>
+
+	<!-- Preloader Animation -->
+	<script src="{{WORKBENCH_WEB_BASE_URL}}/out/vs/code/browser/workbench/preloader/main.js"></script>
 
 	<!-- Startup (do not modify order of script tags!) -->
 	<script src="{{WORKBENCH_WEB_BASE_URL}}/out/vs/loader.js"></script>
