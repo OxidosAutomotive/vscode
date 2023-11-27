@@ -14,10 +14,6 @@ export type DidChangeProfileEvent = { readonly added: ILocalExtension[]; readonl
 
 export const IProfileAwareExtensionManagementService = refineServiceDecorator<IExtensionManagementService, IProfileAwareExtensionManagementService>(IExtensionManagementService);
 export interface IProfileAwareExtensionManagementService extends IExtensionManagementService {
-	readonly onProfileAwareInstallExtension: Event<InstallExtensionEvent>;
-	readonly onProfileAwareDidInstallExtensions: Event<readonly InstallExtensionResult[]>;
-	readonly onProfileAwareUninstallExtension: Event<UninstallExtensionEvent>;
-	readonly onProfileAwareDidUninstallExtension: Event<DidUninstallExtensionEvent>;
 	readonly onDidChangeProfile: Event<DidChangeProfileEvent>;
 }
 
@@ -58,17 +54,11 @@ export interface IWorkbenchExtensionManagementService extends IProfileAwareExten
 	onDidInstallExtensions: Event<readonly InstallExtensionResult[]>;
 	onUninstallExtension: Event<UninstallExtensionOnServerEvent>;
 	onDidUninstallExtension: Event<DidUninstallExtensionOnServerEvent>;
-	onProfileAwareInstallExtension: Event<InstallExtensionOnServerEvent>;
-	onProfileAwareDidInstallExtensions: Event<readonly InstallExtensionResult[]>;
-	onProfileAwareUninstallExtension: Event<UninstallExtensionOnServerEvent>;
-	onProfileAwareDidUninstallExtension: Event<DidUninstallExtensionOnServerEvent>;
 	onDidChangeProfile: Event<DidChangeProfileForServerEvent>;
 
 	installVSIX(location: URI, manifest: IExtensionManifest, installOptions?: InstallVSIXOptions): Promise<ILocalExtension>;
 	installFromLocation(location: URI): Promise<ILocalExtension>;
-	installExtensions(extensions: IGalleryExtension[], installOptions?: InstallOptions): Promise<ILocalExtension[]>;
 	updateFromGallery(gallery: IGalleryExtension, extension: ILocalExtension, installOptions?: InstallOptions): Promise<ILocalExtension>;
-	getExtensionManagementServerToInstall(manifest: IExtensionManifest): IExtensionManagementServer | null;
 }
 
 export const enum EnablementState {

@@ -18,7 +18,7 @@ import { ActionBar } from 'vs/base/browser/ui/actionbar/actionbar';
 import { IListVirtualDelegate } from 'vs/base/browser/ui/list/list';
 import { IListAccessibilityProvider } from 'vs/base/browser/ui/list/listWidget';
 import { WorkbenchAsyncDataTree } from 'vs/platform/list/browser/listService';
-import { IAsyncDataSource, ITreeMouseEvent, ITreeContextMenuEvent, ITreeDragAndDrop, ITreeDragOverReaction } from 'vs/base/browser/ui/tree/tree';
+import { IAsyncDataSource, ITreeMouseEvent, ITreeContextMenuEvent, ITreeDragAndDrop, ITreeDragOverReaction, ITreeNode } from 'vs/base/browser/ui/tree/tree';
 import { IDragAndDropData } from 'vs/base/browser/dnd';
 import { ElementsDragAndDropData } from 'vs/base/browser/ui/list/listView';
 import { FuzzyScore } from 'vs/base/common/filters';
@@ -181,6 +181,7 @@ export class WatchExpressionsView extends ViewPane {
 	}
 
 	override focus(): void {
+		super.focus();
 		this.tree.domFocus();
 	}
 
@@ -278,6 +279,10 @@ class WatchExpressionsRenderer extends AbstractExpressionsRenderer {
 
 	get templateId() {
 		return WatchExpressionsRenderer.ID;
+	}
+
+	public override renderElement(node: ITreeNode<IExpression, FuzzyScore>, index: number, data: IExpressionTemplateData): void {
+		super.renderExpressionElement(node.element, node, data);
 	}
 
 	protected renderExpression(expression: IExpression, data: IExpressionTemplateData, highlights: IHighlight[]): void {
@@ -413,6 +418,8 @@ class WatchExpressionsDragAndDrop implements ITreeDragAndDrop<IExpression> {
 		const position = targetElement instanceof Expression ? watches.indexOf(targetElement) : watches.length - 1;
 		this.debugService.moveWatchExpression(draggedElement.getId(), position);
 	}
+
+	dispose(): void { }
 }
 
 registerAction2(class Collapse extends ViewAction<WatchExpressionsView> {

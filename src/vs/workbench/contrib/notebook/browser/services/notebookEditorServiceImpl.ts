@@ -12,8 +12,12 @@ import { isCompositeNotebookEditorInput, NotebookEditorInput } from 'vs/workbenc
 import { IBorrowValue, INotebookEditorService } from 'vs/workbench/contrib/notebook/browser/services/notebookEditorService';
 import { INotebookEditor, INotebookEditorCreationOptions } from 'vs/workbench/contrib/notebook/browser/notebookBrowser';
 import { Emitter } from 'vs/base/common/event';
-import { GroupIdentifier } from 'vs/workbench/common/editor';
+import { GroupIdentifier, GroupModelChangeKind } from 'vs/workbench/common/editor';
 import { Dimension } from 'vs/base/browser/dom';
+import { URI } from 'vs/base/common/uri';
+import { IEditorService } from 'vs/workbench/services/editor/common/editorService';
+import { IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
+import { InteractiveWindowOpen } from 'vs/workbench/contrib/notebook/common/notebookContextKeys';
 
 export class NotebookEditorWidgetService implements INotebookEditorService {
 
@@ -33,6 +37,8 @@ export class NotebookEditorWidgetService implements INotebookEditorService {
 
 	constructor(
 		@IEditorGroupsService editorGroupService: IEditorGroupsService,
+		@IEditorService editorService: IEditorService,
+		@IContextKeyService contextKeyService: IContextKeyService
 	) {
 
 		const groupListener = new Map<number, IDisposable[]>();
@@ -71,7 +77,7 @@ export class NotebookEditorWidgetService implements INotebookEditorService {
 			groupListener.set(id, listeners);
 		};
 		this._disposables.add(editorGroupService.onDidAddGroup(onNewGroup));
-		editorGroupService.whenReady.then(() => editorGroupService.groups.forEach(onNewGroup));
+		editorGroupService.mainPart.whenReady.then(() => editorGroupService.groups.forEach(onNewGroup));
 
 		// group removed -> clean up listeners, clean up widgets
 		this._disposables.add(editorGroupService.onDidRemoveGroup(group => {
@@ -86,6 +92,19 @@ export class NotebookEditorWidgetService implements INotebookEditorService {
 				for (const value of widgets.values()) {
 					value.token = undefined;
 					this._disposeWidget(value.widget);
+				}
+			}
+		}));
+
+		const interactiveWindowOpen = InteractiveWindowOpen.bindTo(contextKeyService);
+		this._disposables.add(editorService.onDidEditorsChange(e => {
+			if (e.event.kind === GroupModelChangeKind.EDITOR_OPEN && !interactiveWindowOpen.get()) {
+				if (editorService.editors.find(editor => editor.editorId === 'interactive')) {
+					interactiveWindowOpen.set(true);
+				}
+			} else if (e.event.kind === GroupModelChangeKind.EDITOR_CLOSE && interactiveWindowOpen.get()) {
+				if (!editorService.editors.find(editor => editor.editorId === 'interactive')) {
+					interactiveWindowOpen.set(false);
 				}
 			}
 		}));
@@ -127,6 +146,26 @@ export class NotebookEditorWidgetService implements INotebookEditorService {
 			this._borrowableEditors.set(targetID, targetMap);
 		}
 		targetMap.set(input.resource, widget);
+	}
+
+	retrieveExistingWidgetFromURI(resource: URI): IBorrowValue<NotebookEditorWidget> | undefined {
+		for (const widgetInfo of this._borrowableEditors.values()) {
+			const widget = widgetInfo.get(resource);
+			if (widget) {
+				return this._createBorrowValue(widget.token!, widget);
+			}
+		}
+		return undefined;
+	}
+
+	retrieveAllExistingWidgets(): IBorrowValue<NotebookEditorWidget>[] {
+		const ret: IBorrowValue<NotebookEditorWidget>[] = [];
+		for (const widgetInfo of this._borrowableEditors.values()) {
+			for (const widget of widgetInfo.values()) {
+				ret.push(this._createBorrowValue(widget.token!, widget));
+			}
+		}
+		return ret;
 	}
 
 	retrieveWidget(accessor: ServicesAccessor, group: IEditorGroup, input: NotebookEditorInput, creationOptions?: INotebookEditorCreationOptions, initialDimension?: Dimension): IBorrowValue<NotebookEditorWidget> {

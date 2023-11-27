@@ -82,7 +82,7 @@ export class InstallCountWidget extends ExtensionWidget {
 			return;
 		}
 
-		if (this.small && this.extension.state === ExtensionState.Installed) {
+		if (this.small && this.extension.state !== ExtensionState.Uninstalled) {
 			return;
 		}
 
@@ -146,7 +146,7 @@ export class RatingsWidget extends ExtensionWidget {
 			return;
 		}
 
-		if (this.small && this.extension.state === ExtensionState.Installed) {
+		if (this.small && this.extension.state !== ExtensionState.Uninstalled) {
 			return;
 		}
 
@@ -180,6 +180,42 @@ export class RatingsWidget extends ExtensionWidget {
 				ratingCountElemet.style.paddingLeft = '1px';
 			}
 		}
+	}
+}
+
+export class VerifiedPublisherWidget extends ExtensionWidget {
+
+	private disposables = this._register(new DisposableStore());
+
+	constructor(
+		private container: HTMLElement,
+		private small: boolean,
+		@IOpenerService private readonly openerService: IOpenerService,
+	) {
+		super();
+		this.render();
+	}
+
+	render(): void {
+		reset(this.container);
+		this.disposables.clear();
+		if (!this.extension?.publisherDomain?.verified) {
+			return;
+		}
+
+		const publisherDomainLink = URI.parse(this.extension.publisherDomain.link);
+		const verifiedPublisher = append(this.container, $('span.extension-verified-publisher.clickable'));
+		append(verifiedPublisher, renderIcon(verifiedPublisherIcon));
+
+		if (!this.small) {
+			verifiedPublisher.tabIndex = 0;
+			verifiedPublisher.title = `Verified Domain: ${this.extension.publisherDomain.link}`;
+			verifiedPublisher.setAttribute('role', 'link');
+
+			append(verifiedPublisher, $('span.extension-verified-publisher-domain', undefined, publisherDomainLink.authority.startsWith('www.') ? publisherDomainLink.authority.substring(4) : publisherDomainLink.authority));
+			this.disposables.add(onClick(verifiedPublisher, () => this.openerService.open(publisherDomainLink)));
+		}
+
 	}
 }
 
@@ -500,9 +536,11 @@ export class ExtensionHoverWidget extends ExtensionWidget {
 				showHover: (options) => {
 					return this.hoverService.showHover({
 						...options,
-						hoverPosition: this.options.position(),
-						forcePosition: true,
-						additionalClasses: ['extension-hover']
+						additionalClasses: ['extension-hover'],
+						position: {
+							hoverPosition: this.options.position(),
+							forcePosition: true,
+						},
 					});
 				},
 				placement: 'element'
@@ -671,7 +709,7 @@ export class ExtensionHoverWidget extends ExtensionWidget {
 
 export class ExtensionStatusWidget extends ExtensionWidget {
 
-	private readonly renderDisposables = this._register(new DisposableStore());
+	private readonly renderDisposables = this._register(new MutableDisposable());
 
 	private readonly _onDidRender = this._register(new Emitter<void>());
 	readonly onDidRender: Event<void> = this._onDidRender.event;
@@ -688,6 +726,9 @@ export class ExtensionStatusWidget extends ExtensionWidget {
 
 	render(): void {
 		reset(this.container);
+		this.renderDisposables.value = undefined;
+		const disposables = new DisposableStore();
+		this.renderDisposables.value = disposables;
 		const extensionStatus = this.extensionStatusAction.status;
 		if (extensionStatus) {
 			const markdown = new MarkdownString('', { isTrusted: true, supportThemeIcons: true });
@@ -695,12 +736,12 @@ export class ExtensionStatusWidget extends ExtensionWidget {
 				markdown.appendMarkdown(`$(${extensionStatus.icon.id})&nbsp;`);
 			}
 			markdown.appendMarkdown(extensionStatus.message.value);
-			const rendered = this.renderDisposables.add(renderMarkdown(markdown, {
+			const rendered = disposables.add(renderMarkdown(markdown, {
 				actionHandler: {
 					callback: (content) => {
 						this.openerService.open(content, { allowCommands: true }).catch(onUnexpectedError);
 					},
-					disposables: this.renderDisposables
+					disposables
 				}
 			}));
 			append(this.container, rendered.element);

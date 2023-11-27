@@ -50,6 +50,7 @@ import { IContextKey, IContextKeyService } from 'vs/platform/contextkey/common/c
 import { MarkersContextKeys, MarkersViewMode } from 'vs/workbench/contrib/markers/common/markers';
 import { unsupportedSchemas } from 'vs/platform/markers/common/markerService';
 import { defaultCountBadgeStyles } from 'vs/platform/theme/browser/defaultStyles';
+import Severity from 'vs/base/common/severity';
 
 interface IResourceMarkersTemplateData {
 	readonly resourceLabel: IResourceLabel;
@@ -149,7 +150,7 @@ export type FilterData = ResourceMarkersFilterData | MarkerFilterData | RelatedI
 
 export class ResourceMarkersRenderer implements ITreeRenderer<ResourceMarkers, ResourceMarkersFilterData, IResourceMarkersTemplateData> {
 
-	private renderedNodes = new Map<ITreeNode<ResourceMarkers, ResourceMarkersFilterData>, IResourceMarkersTemplateData>();
+	private renderedNodes = new Map<ResourceMarkers, IResourceMarkersTemplateData[]>();
 	private readonly disposables = new DisposableStore();
 
 	constructor(
@@ -184,11 +185,23 @@ export class ResourceMarkersRenderer implements ITreeRenderer<ResourceMarkers, R
 		}
 
 		this.updateCount(node, templateData);
-		this.renderedNodes.set(node, templateData);
+		const nodeRenders = this.renderedNodes.get(resourceMarkers) ?? [];
+		this.renderedNodes.set(resourceMarkers, [...nodeRenders, templateData]);
 	}
 
-	disposeElement(node: ITreeNode<ResourceMarkers, ResourceMarkersFilterData>): void {
-		this.renderedNodes.delete(node);
+	disposeElement(node: ITreeNode<ResourceMarkers, ResourceMarkersFilterData>, index: number, templateData: IResourceMarkersTemplateData): void {
+		const nodeRenders = this.renderedNodes.get(node.element) ?? [];
+		const nodeRenderIndex = nodeRenders.findIndex(nodeRender => templateData === nodeRender);
+
+		if (nodeRenderIndex < 0) {
+			throw new Error('Disposing unknown resource marker');
+		}
+
+		if (nodeRenders.length === 1) {
+			this.renderedNodes.delete(node.element);
+		} else {
+			nodeRenders.splice(nodeRenderIndex, 1);
+		}
 	}
 
 	disposeTemplate(templateData: IResourceMarkersTemplateData): void {
@@ -196,13 +209,13 @@ export class ResourceMarkersRenderer implements ITreeRenderer<ResourceMarkers, R
 	}
 
 	private onDidChangeRenderNodeCount(node: ITreeNode<ResourceMarkers, ResourceMarkersFilterData>): void {
-		const templateData = this.renderedNodes.get(node);
+		const nodeRenders = this.renderedNodes.get(node.element);
 
-		if (!templateData) {
+		if (!nodeRenders) {
 			return;
 		}
 
-		this.updateCount(node, templateData);
+		nodeRenders.forEach(nodeRender => this.updateCount(node, nodeRender));
 	}
 
 	private updateCount(node: ITreeNode<ResourceMarkers, ResourceMarkersFilterData>, templateData: IResourceMarkersTemplateData): void {
@@ -270,6 +283,7 @@ class MarkerWidget extends Disposable {
 
 	private readonly actionBar: ActionBar;
 	private readonly icon: HTMLElement;
+	private readonly iconContainer: HTMLElement;
 	private readonly messageAndDetailsContainer: HTMLElement;
 	private readonly disposables = this._register(new DisposableStore());
 
@@ -283,7 +297,12 @@ class MarkerWidget extends Disposable {
 		this.actionBar = this._register(new ActionBar(dom.append(parent, dom.$('.actions')), {
 			actionViewItemProvider: (action: IAction) => action.id === QuickFixAction.ID ? _instantiationService.createInstance(QuickFixActionViewItem, <QuickFixAction>action) : undefined
 		}));
-		this.icon = dom.append(parent, dom.$(''));
+
+		// wrap the icon in a container that get the icon color as foreground color. That way, if the
+		// list view does not have a specific color for the icon (=the color variable is invalid) it
+		// falls back to the foreground color of container (inherit)
+		this.iconContainer = dom.append(parent, dom.$(''));
+		this.icon = dom.append(this.iconContainer, dom.$(''));
 		this.messageAndDetailsContainer = dom.append(parent, dom.$('.marker-message-details-container'));
 	}
 
@@ -292,7 +311,8 @@ class MarkerWidget extends Disposable {
 		this.disposables.clear();
 		dom.clearNode(this.messageAndDetailsContainer);
 
-		this.icon.className = `marker-icon codicon ${SeverityIcon.className(MarkerSeverity.toSeverity(element.marker.severity))}`;
+		this.iconContainer.className = `marker-icon ${Severity.toString(MarkerSeverity.toSeverity(element.marker.severity))}`;
+		this.icon.className = `codicon ${SeverityIcon.className(MarkerSeverity.toSeverity(element.marker.severity))}`;
 		this.renderQuickfixActionbar(element);
 
 		this.renderMessageAndDetails(element, filterData);
@@ -305,10 +325,10 @@ class MarkerWidget extends Disposable {
 		if (viewModel) {
 			const quickFixAction = viewModel.quickFixAction;
 			this.actionBar.push([quickFixAction], { icon: true, label: false });
-			this.icon.classList.toggle('quickFix', quickFixAction.enabled);
+			this.iconContainer.classList.toggle('quickFix', quickFixAction.enabled);
 			quickFixAction.onDidChange(({ enabled }) => {
 				if (!isUndefinedOrNull(enabled)) {
-					this.icon.classList.toggle('quickFix', enabled);
+					this.iconContainer.classList.toggle('quickFix', enabled);
 				}
 			}, this, this.disposables);
 			quickFixAction.onShowQuickFixes(() => {
@@ -377,10 +397,10 @@ class MarkerWidget extends Disposable {
 					const codeMatches = filterData && filterData.codeMatches || [];
 					code.set(marker.code, codeMatches);
 				} else {
-					// TODO@sandeep: these widgets should be disposed
 					const container = dom.$('.marker-code');
 					const code = new HighlightedLabel(container);
-					new Link(parent, { href: marker.code.target.toString(), label: container, title: marker.code.target.toString() }, undefined, this._openerService);
+					const link = marker.code.target.toString(true);
+					this.disposables.add(new Link(parent, { href: link, label: container, title: link }, undefined, this._openerService));
 					const codeMatches = filterData && filterData.codeMatches || [];
 					code.set(marker.code.value, codeMatches);
 				}

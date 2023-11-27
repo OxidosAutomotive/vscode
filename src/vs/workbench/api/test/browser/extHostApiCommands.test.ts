@@ -59,6 +59,10 @@ import { LanguageFeaturesService } from 'vs/editor/common/services/languageFeatu
 import { assertType } from 'vs/base/common/types';
 import { IUriIdentityService } from 'vs/platform/uriIdentity/common/uriIdentity';
 import { IExtHostTelemetry } from 'vs/workbench/api/common/extHostTelemetry';
+import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
+import { TestConfigurationService } from 'vs/platform/configuration/test/common/testConfigurationService';
+import { IEnvironmentService } from 'vs/platform/environment/common/environment';
+import { ensureFileSystemProviderError } from 'vs/platform/files/common/files';
 
 function assertRejects(fn: () => Promise<any>, message: string = 'Expected rejection') {
 	return fn().then(() => assert.ok(false, message), _err => assert.ok(true));
@@ -122,6 +126,10 @@ suite('ExtHostLanguageFeatureCommands', function () {
 				return Promise.resolve(insta.invokeFunction(handler, ...args));
 			}
 		}));
+		services.set(IEnvironmentService, new class extends mock<IEnvironmentService>() {
+			override isBuilt: boolean = true;
+			override isExtensionDevelopment: boolean = false;
+		});
 		services.set(IMarkerService, new MarkerService());
 		services.set(ILogService, new SyncDescriptor(NullLogService));
 		services.set(ILanguageFeatureDebounceService, new SyncDescriptor(LanguageFeatureDebounceService));
@@ -143,6 +151,7 @@ suite('ExtHostLanguageFeatureCommands', function () {
 		});
 		services.set(ILanguageFeatureDebounceService, new SyncDescriptor(LanguageFeatureDebounceService));
 		services.set(IOutlineModelService, new SyncDescriptor(OutlineModelService));
+		services.set(IConfigurationService, new TestConfigurationService());
 
 		const insta = new InstantiationService(services);
 
@@ -160,7 +169,11 @@ suite('ExtHostLanguageFeatureCommands', function () {
 		const extHostDocuments = new ExtHostDocuments(rpcProtocol, extHostDocumentsAndEditors);
 		rpcProtocol.set(ExtHostContext.ExtHostDocuments, extHostDocuments);
 
-		commands = new ExtHostCommands(rpcProtocol, new NullLogService());
+		commands = new ExtHostCommands(rpcProtocol, new NullLogService(), new class extends mock<IExtHostTelemetry>() {
+			override onExtensionError(): boolean {
+				return true;
+			}
+		});
 		rpcProtocol.set(ExtHostContext.ExtHostCommands, commands);
 		rpcProtocol.set(MainContext.MainThreadCommands, insta.createInstance(MainThreadCommands, rpcProtocol));
 		ExtHostApiCommands.register(commands);
@@ -190,6 +203,8 @@ suite('ExtHostLanguageFeatureCommands', function () {
 		disposables = dispose(disposables);
 		return rpcProtocol.sync();
 	});
+
+	ensureFileSystemProviderError();
 
 	// --- workspace symbols
 
@@ -1506,7 +1521,7 @@ suite('ExtHostLanguageFeatureCommands', function () {
 		assert.strictEqual(value[0].range.end.character, 10);
 	});
 
-	test('selectionRangeProvider on inner array always returns outer array #91852', async function () {
+	test('more element test of selectionRangeProvider on inner array always returns outer array #91852', async function () {
 
 		disposables.push(extHost.registerSelectionRangeProvider(nullExtensionDescription, defaultSelector, <vscode.SelectionRangeProvider>{
 			provideSelectionRanges(_doc, positions) {

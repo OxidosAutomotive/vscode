@@ -11,7 +11,6 @@ import { isCodeEditor, isDiffEditor } from 'vs/editor/browser/editorBrowser';
 import { IInstantiationService, ServicesAccessor } from 'vs/platform/instantiation/common/instantiation';
 import { IThemeService } from 'vs/platform/theme/common/themeService';
 import { CommentNode, CommentsModel, ResourceWithCommentThreads, ICommentThreadChangedEvent } from 'vs/workbench/contrib/comments/common/commentModel';
-import { CommentController } from 'vs/workbench/contrib/comments/browser/commentsEditorContribution';
 import { IWorkspaceCommentThreadsEvent, ICommentService } from 'vs/workbench/contrib/comments/browser/commentService';
 import { IEditorService, ACTIVE_GROUP, SIDE_GROUP } from 'vs/workbench/services/editor/common/editorService';
 import { CommandsRegistry } from 'vs/platform/commands/common/commands';
@@ -41,8 +40,12 @@ import { CommentThreadState } from 'vs/editor/common/languages';
 import { IDisposable, MutableDisposable } from 'vs/base/common/lifecycle';
 import { ITreeElement } from 'vs/base/browser/ui/tree/tree';
 import { Iterable } from 'vs/base/common/iterator';
+import { CommentController } from 'vs/workbench/contrib/comments/browser/commentsController';
+import { Range } from 'vs/editor/common/core/range';
+import { registerNavigableContainer } from 'vs/workbench/browser/actions/widgetNavigationCommands';
 
 const CONTEXT_KEY_HAS_COMMENTS = new RawContextKey<boolean>('commentsView.hasComments', false);
+const CONTEXT_KEY_SOME_COMMENTS_EXPANDED = new RawContextKey<boolean>('commentsView.someCommentsExpanded', false);
 const VIEW_STORAGE_ID = 'commentsViewState';
 
 function createResourceCommentsIterator(model: CommentsModel): Iterable<ITreeElement<ResourceWithCommentThreads | CommentNode>> {
@@ -63,6 +66,7 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 	private totalComments: number = 0;
 	private totalUnresolved = 0;
 	private readonly hasCommentsContextKey: IContextKey<boolean>;
+	private readonly someCommentsExpandedContextKey: IContextKey<boolean>;
 	private readonly filter: Filter;
 	readonly filters: CommentsFilters;
 	private readonly activity = this._register(new MutableDisposable<IDisposable>());
@@ -93,7 +97,7 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 		@IStorageService storageService: IStorageService
 	) {
 		const stateMemento = new Memento(VIEW_STORAGE_ID, storageService);
-		const viewState = stateMemento.getMemento(StorageScope.WORKSPACE, StorageTarget.USER);
+		const viewState = stateMemento.getMemento(StorageScope.WORKSPACE, StorageTarget.MACHINE);
 		super({
 			...options,
 			filterOptions: {
@@ -105,6 +109,7 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 			}
 		}, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, telemetryService);
 		this.hasCommentsContextKey = CONTEXT_KEY_HAS_COMMENTS.bindTo(contextKeyService);
+		this.someCommentsExpandedContextKey = CONTEXT_KEY_SOME_COMMENTS_EXPANDED.bindTo(contextKeyService);
 		this.stateMemento = stateMemento;
 		this.viewState = viewState;
 
@@ -139,6 +144,23 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 		this.viewState['showUnresolved'] = this.filters.showUnresolved;
 		this.stateMemento.saveMemento();
 		super.saveState();
+	}
+
+	override render(): void {
+		super.render();
+		this._register(registerNavigableContainer({
+			focusNotifiers: [this, this.filterWidget],
+			focusNextWidget: () => {
+				if (this.filterWidget.hasFocus()) {
+					this.focus();
+				}
+			},
+			focusPreviousWidget: () => {
+				if (!this.filterWidget.hasFocus()) {
+					this.focusFilter();
+				}
+			}
+		}));
 	}
 
 	public focusFilter(): void {
@@ -187,6 +209,7 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 
 		this._register(this.commentService.onDidSetAllCommentThreads(this.onAllCommentsChanged, this));
 		this._register(this.commentService.onDidUpdateCommentThreads(this.onCommentsUpdated, this));
+		this._register(this.commentService.onDidDeleteDataProvider(this.onDataProviderDeleted, this));
 
 		const styleElement = dom.createStyleSheet(container);
 		this.applyStyles(styleElement);
@@ -202,7 +225,10 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 	}
 
 	public override focus(): void {
-		if (this.tree && this.tree.getHTMLElement() === document.activeElement) {
+		super.focus();
+
+		const element = this.tree?.getHTMLElement();
+		if (element && dom.isActiveElement(element)) {
 			return;
 		}
 
@@ -256,6 +282,16 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 		}
 	}
 
+	public expandAll() {
+		if (this.tree) {
+			this.tree.expandAll();
+			this.tree.setSelection([]);
+			this.tree.setFocus([]);
+			this.tree.domFocus();
+			this.tree.focusFirst();
+		}
+	}
+
 	public get hasRendered(): boolean {
 		return !!this.tree;
 	}
@@ -299,25 +335,42 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 						return nls.localize('resourceWithCommentThreadsLabel', "Comments in {0}, full path {1}", basename(element.resource), element.resource.fsPath);
 					}
 					if (element instanceof CommentNode) {
-						return nls.localize('resourceWithCommentLabel',
-							"Comment from ${0} at line {1} column {2} in {3}, source: {4}",
-							element.comment.userName,
-							element.range.startLineNumber,
-							element.range.startColumn,
-							basename(element.resource),
-							(typeof element.comment.body === 'string') ? element.comment.body : element.comment.body.value
-						);
+						if (element.range) {
+							return nls.localize('resourceWithCommentLabel',
+								"Comment from ${0} at line {1} column {2} in {3}, source: {4}",
+								element.comment.userName,
+								element.range.startLineNumber,
+								element.range.startColumn,
+								basename(element.resource),
+								(typeof element.comment.body === 'string') ? element.comment.body : element.comment.body.value
+							);
+						} else {
+							return nls.localize('resourceWithCommentLabelFile',
+								"Comment from ${0} in {1}, source: {2}",
+								element.comment.userName,
+								basename(element.resource),
+								(typeof element.comment.body === 'string') ? element.comment.body : element.comment.body.value
+							);
+						}
 					}
 					return '';
 				},
 				getWidgetAriaLabel(): string {
-					return COMMENTS_VIEW_TITLE;
+					return COMMENTS_VIEW_TITLE.value;
 				}
 			}
 		}));
 
 		this._register(this.tree.onDidOpen(e => {
 			this.openFile(e.element, e.editorOptions.pinned, e.editorOptions.preserveFocus, e.sideBySide);
+		}));
+
+
+		this._register(this.tree.onDidChangeModel(() => {
+			this.updateSomeCommentsExpanded();
+		}));
+		this._register(this.tree.onDidChangeCollapseState(() => {
+			this.updateSomeCommentsExpanded();
 		}));
 	}
 
@@ -349,7 +402,7 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 				const commentToReveal = element instanceof ResourceWithCommentThreads ? element.commentThreads[0].comment.uniqueIdInThread : element.comment.uniqueIdInThread;
 				if (threadToReveal && isCodeEditor(editor)) {
 					const controller = CommentController.get(editor);
-					controller?.revealCommentThread(threadToReveal, commentToReveal, true);
+					controller?.revealCommentThread(threadToReveal, commentToReveal, true, !preserveFocus);
 				}
 
 				return true;
@@ -364,14 +417,14 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 			options: {
 				pinned: pinned,
 				preserveFocus: preserveFocus,
-				selection: range
+				selection: range ?? new Range(1, 1, 1, 1)
 			}
 		}, sideBySide ? SIDE_GROUP : ACTIVE_GROUP).then(editor => {
 			if (editor) {
 				const control = editor.getControl();
 				if (threadToReveal && isCodeEditor(control)) {
 					const controller = CommentController.get(control);
-					controller?.revealCommentThread(threadToReveal, commentToReveal.uniqueIdInThread, true);
+					controller?.revealCommentThread(threadToReveal, commentToReveal.uniqueIdInThread, true, !preserveFocus);
 				}
 			}
 		});
@@ -403,7 +456,7 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 
 	private onAllCommentsChanged(e: IWorkspaceCommentThreadsEvent): void {
 		this.cachedFilterStats = undefined;
-		this.commentsModel.setCommentThreads(e.ownerId, e.commentThreads);
+		this.commentsModel.setCommentThreads(e.ownerId, e.ownerLabel, e.commentThreads);
 		this.totalComments += e.commentThreads.length;
 
 		let unresolved = 0;
@@ -439,6 +492,43 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 		}
 	}
 
+	private onDataProviderDeleted(owner: string | undefined): void {
+		this.cachedFilterStats = undefined;
+		this.commentsModel.deleteCommentsByOwner(owner);
+
+		this.totalComments = 0;
+		this.refresh();
+	}
+
+	private updateSomeCommentsExpanded() {
+		this.someCommentsExpandedContextKey.set(this.isSomeCommentsExpanded());
+	}
+
+	public areAllCommentsExpanded(): boolean {
+		if (!this.tree) {
+			return false;
+		}
+		const navigator = this.tree.navigate();
+		while (navigator.next()) {
+			if (this.tree.isCollapsed(navigator.current())) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	public isSomeCommentsExpanded(): boolean {
+		if (!this.tree) {
+			return false;
+		}
+		const navigator = this.tree.navigate();
+		while (navigator.next()) {
+			if (!this.tree.isCollapsed(navigator.current())) {
+				return true;
+			}
+		}
+		return false;
+	}
 }
 
 CommandsRegistry.registerCommand({
@@ -460,12 +550,33 @@ registerAction2(class Collapse extends ViewAction<CommentsPanel> {
 			menu: {
 				id: MenuId.ViewTitle,
 				group: 'navigation',
-				when: ContextKeyExpr.and(ContextKeyExpr.equals('view', COMMENTS_VIEW_ID), CONTEXT_KEY_HAS_COMMENTS),
+				when: ContextKeyExpr.and(ContextKeyExpr.and(ContextKeyExpr.equals('view', COMMENTS_VIEW_ID), CONTEXT_KEY_HAS_COMMENTS), CONTEXT_KEY_SOME_COMMENTS_EXPANDED),
 				order: 100
 			}
 		});
 	}
 	runInView(_accessor: ServicesAccessor, view: CommentsPanel) {
 		view.collapseAll();
+	}
+});
+
+registerAction2(class Expand extends ViewAction<CommentsPanel> {
+	constructor() {
+		super({
+			viewId: COMMENTS_VIEW_ID,
+			id: 'comments.expand',
+			title: nls.localize('expandAll', "Expand All"),
+			f1: false,
+			icon: Codicon.expandAll,
+			menu: {
+				id: MenuId.ViewTitle,
+				group: 'navigation',
+				when: ContextKeyExpr.and(ContextKeyExpr.and(ContextKeyExpr.equals('view', COMMENTS_VIEW_ID), CONTEXT_KEY_HAS_COMMENTS), ContextKeyExpr.not(CONTEXT_KEY_SOME_COMMENTS_EXPANDED.key)),
+				order: 100
+			}
+		});
+	}
+	runInView(_accessor: ServicesAccessor, view: CommentsPanel) {
+		view.expandAll();
 	}
 });

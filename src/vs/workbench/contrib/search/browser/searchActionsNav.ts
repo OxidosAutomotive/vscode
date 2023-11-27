@@ -12,7 +12,7 @@ import { WorkbenchCompressibleObjectTree } from 'vs/platform/list/browser/listSe
 import { IViewsService } from 'vs/workbench/common/views';
 import * as Constants from 'vs/workbench/contrib/search/common/constants';
 import * as SearchEditorConstants from 'vs/workbench/contrib/searchEditor/browser/constants';
-import { FileMatchOrMatch, FolderMatch, RenderableMatch } from 'vs/workbench/contrib/search/common/searchModel';
+import { FileMatchOrMatch, FolderMatch, RenderableMatch } from 'vs/workbench/contrib/search/browser/searchModel';
 import { SearchEditor } from 'vs/workbench/contrib/searchEditor/browser/searchEditor';
 import { SearchEditorInput } from 'vs/workbench/contrib/searchEditor/browser/searchEditorInput';
 import { IEditorService } from 'vs/workbench/services/editor/common/editorService';
@@ -23,6 +23,8 @@ import { KeybindingWeight } from 'vs/platform/keybinding/common/keybindingsRegis
 import { KeyCode, KeyMod } from 'vs/base/common/keyCodes';
 import { ToggleCaseSensitiveKeybinding, TogglePreserveCaseKeybinding, ToggleRegexKeybinding, ToggleWholeWordKeybinding } from 'vs/editor/contrib/find/browser/findModel';
 import { category, getSearchView, openSearchView } from 'vs/workbench/contrib/search/browser/searchActionsBase';
+import { CONTEXT_ACCESSIBILITY_MODE_ENABLED } from 'vs/platform/accessibility/common/accessibility';
+import { getActiveElement } from 'vs/base/browser/dom';
 
 //#region Actions: Changing Search Input Options
 registerAction2(class ToggleQueryDetailsAction extends Action2 {
@@ -41,13 +43,13 @@ registerAction2(class ToggleQueryDetailsAction extends Action2 {
 			},
 		});
 	}
-	run(accessor: ServicesAccessor) {
-		const contextService = accessor.get(IContextKeyService).getContext(document.activeElement);
+	run(accessor: ServicesAccessor, ...args: any[]) {
+		const contextService = accessor.get(IContextKeyService).getContext(getActiveElement());
 		if (contextService.getValue(SearchEditorConstants.InSearchEditor.serialize())) {
-			(accessor.get(IEditorService).activeEditorPane as SearchEditor).toggleQueryDetails();
+			(accessor.get(IEditorService).activeEditorPane as SearchEditor).toggleQueryDetails(args[0]?.show);
 		} else if (contextService.getValue(Constants.SearchViewFocusedKey.serialize())) {
 			const searchView = getSearchView(accessor.get(IViewsService));
-			assertIsDefined(searchView).toggleQueryDetails();
+			assertIsDefined(searchView).toggleQueryDetails(undefined, args[0]?.show);
 		}
 	}
 });
@@ -337,7 +339,7 @@ registerAction2(class FocusSearchFromResultsAction extends Action2 {
 			category,
 			keybinding: {
 				weight: KeybindingWeight.WorkbenchContrib,
-				when: ContextKeyExpr.and(Constants.SearchViewVisibleKey, Constants.FirstMatchFocusKey),
+				when: ContextKeyExpr.and(Constants.SearchViewVisibleKey, ContextKeyExpr.or(Constants.FirstMatchFocusKey, CONTEXT_ACCESSIBILITY_MODE_ENABLED)),
 				primary: KeyMod.CtrlCmd | KeyCode.UpArrow,
 			},
 		});
