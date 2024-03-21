@@ -1,3 +1,26 @@
+/* HTML: <div class="loader"></div> */
+.loader {
+	width: fit-content;
+	font-weight: bold;
+	font-family: monospace;
+	font-size: 60px;
+	background:linear-gradient(90deg,#000 50%,#0000 0) right/200% 100%;
+	animation: l21 2s infinite linear;
+}
+.loader::before {
+	content :"Loading...";
+	color: #0000;
+	padding: 0 5px;
+	background: inherit;
+	background-image: linear-gradient(90deg,#fff 50%,#000 0);
+	-webkit-background-clip:text;
+			background-clip:text;
+}
+
+@keyframes l21{
+	100%{background-position: left}
+}
+
 .web #preloader {
 	display: none;
 }
@@ -13,7 +36,7 @@
 
 #preloader h1 {
 	font-family: 'Open Sans', -apple-system, 'Segoe UI', sans-serif;
-	font-size: 50px;
+	font-size: 75px;
 	font-weight: bold;
 	color: hsl(0, 0%, 13%);
 	box-sizing: border-box;
@@ -22,121 +45,9 @@
 
 #preloader h2 {
 	font-family: 'Open Sans', -apple-system, 'Segoe UI', sans-serif;
-	font-size: 20px;
+	font-size: 40px;
 	font-weight: bold;
 	color: hsl(0, 0%, 13%);
 	box-sizing: border-box;
 	margin-block-end: 0px;
-}
-
-
-.dots {
-	display: inline-flex;
-}
-
-.dots--animate .dot.z {
-	-webkit-animation: scale 0.8s 0.2s forwards;
-	animation: scale 0.8s 0.2s forwards;
-}
-
-.dots--animate .dot.f,
-.dots--animate .dot.s {
-	-webkit-animation: right 0.5s forwards;
-	animation: right 0.5s forwards;
-}
-
-.dots--animate .dot.l {
-	-webkit-animation: rightDown 0.4s 0.1s forwards linear, drop 2s 0.4s forwards linear;
-	animation: rightDown 0.4s 0.1s forwards linear, drop 2s 0.4s forwards linear;
-}
-
-.dot {
-	display: inline-block;
-	width: 10px;
-	height: 10px;
-	background: #212121;
-	border-radius: 10px;
-	position: relative;
-	margin-left: 6px;
-}
-
-.dot.z {
-	position: absolute;
-	transform: scale(0);
-}
-
-@-webkit-keyframes scale {
-	100% {
-		transform: scale(1);
-	}
-}
-
-@keyframes scale {
-	100% {
-		transform: scale(1);
-	}
-}
-
-.dot.f,
-.dot.s {
-	transform: translateX(0px);
-}
-
-@-webkit-keyframes right {
-	100% {
-		transform: translateX(16px);
-	}
-}
-
-@keyframes right {
-	100% {
-		transform: translateX(16px);
-	}
-}
-
-.dot.t {
-	background: transparent;
-}
-
-.dot .l {
-	margin-left: 0;
-	position: absolute;
-	top: 0;
-	left: 0;
-}
-
-@-webkit-keyframes rightDown {
-	50% {
-		top: 4px;
-		left: 16px;
-	}
-
-	100% {
-		top: 12px;
-		left: 24px;
-	}
-}
-
-@keyframes rightDown {
-	50% {
-		top: 4px;
-		left: 16px;
-	}
-
-	100% {
-		top: 12px;
-		left: 24px;
-	}
-}
-
-@-webkit-keyframes drop {
-	100% {
-		transform: translate(70px, calc(35px + (100vh / 2)));
-	}
-}
-
-@keyframes drop {
-	100% {
-		transform: translate(70px, calc(35px + (100vh / 2)));
-	}
 }
