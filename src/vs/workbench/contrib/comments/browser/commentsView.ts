@@ -41,6 +41,8 @@ import { IDisposable, MutableDisposable } from 'vs/base/common/lifecycle';
 import { ITreeElement } from 'vs/base/browser/ui/tree/tree';
 import { Iterable } from 'vs/base/common/iterator';
 import { CommentController } from 'vs/workbench/contrib/comments/browser/commentsController';
+import { Range } from 'vs/editor/common/core/range';
+import { registerNavigableContainer } from 'vs/workbench/browser/actions/widgetNavigationCommands';
 
 const CONTEXT_KEY_HAS_COMMENTS = new RawContextKey<boolean>('commentsView.hasComments', false);
 const CONTEXT_KEY_SOME_COMMENTS_EXPANDED = new RawContextKey<boolean>('commentsView.someCommentsExpanded', false);
@@ -95,7 +97,7 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 		@IStorageService storageService: IStorageService
 	) {
 		const stateMemento = new Memento(VIEW_STORAGE_ID, storageService);
-		const viewState = stateMemento.getMemento(StorageScope.WORKSPACE, StorageTarget.USER);
+		const viewState = stateMemento.getMemento(StorageScope.WORKSPACE, StorageTarget.MACHINE);
 		super({
 			...options,
 			filterOptions: {
@@ -144,6 +146,23 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 		super.saveState();
 	}
 
+	override render(): void {
+		super.render();
+		this._register(registerNavigableContainer({
+			focusNotifiers: [this, this.filterWidget],
+			focusNextWidget: () => {
+				if (this.filterWidget.hasFocus()) {
+					this.focus();
+				}
+			},
+			focusPreviousWidget: () => {
+				if (!this.filterWidget.hasFocus()) {
+					this.focusFilter();
+				}
+			}
+		}));
+	}
+
 	public focusFilter(): void {
 		this.filterWidget.focus();
 	}
@@ -190,6 +209,7 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 
 		this._register(this.commentService.onDidSetAllCommentThreads(this.onAllCommentsChanged, this));
 		this._register(this.commentService.onDidUpdateCommentThreads(this.onCommentsUpdated, this));
+		this._register(this.commentService.onDidDeleteDataProvider(this.onDataProviderDeleted, this));
 
 		const styleElement = dom.createStyleSheet(container);
 		this.applyStyles(styleElement);
@@ -205,7 +225,10 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 	}
 
 	public override focus(): void {
-		if (this.tree && this.tree.getHTMLElement() === document.activeElement) {
+		super.focus();
+
+		const element = this.tree?.getHTMLElement();
+		if (element && dom.isActiveElement(element)) {
 			return;
 		}
 
@@ -312,19 +335,28 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 						return nls.localize('resourceWithCommentThreadsLabel', "Comments in {0}, full path {1}", basename(element.resource), element.resource.fsPath);
 					}
 					if (element instanceof CommentNode) {
-						return nls.localize('resourceWithCommentLabel',
-							"Comment from ${0} at line {1} column {2} in {3}, source: {4}",
-							element.comment.userName,
-							element.range.startLineNumber,
-							element.range.startColumn,
-							basename(element.resource),
-							(typeof element.comment.body === 'string') ? element.comment.body : element.comment.body.value
-						);
+						if (element.range) {
+							return nls.localize('resourceWithCommentLabel',
+								"Comment from ${0} at line {1} column {2} in {3}, source: {4}",
+								element.comment.userName,
+								element.range.startLineNumber,
+								element.range.startColumn,
+								basename(element.resource),
+								(typeof element.comment.body === 'string') ? element.comment.body : element.comment.body.value
+							);
+						} else {
+							return nls.localize('resourceWithCommentLabelFile',
+								"Comment from ${0} in {1}, source: {2}",
+								element.comment.userName,
+								basename(element.resource),
+								(typeof element.comment.body === 'string') ? element.comment.body : element.comment.body.value
+							);
+						}
 					}
 					return '';
 				},
 				getWidgetAriaLabel(): string {
-					return COMMENTS_VIEW_TITLE;
+					return COMMENTS_VIEW_TITLE.value;
 				}
 			}
 		}));
@@ -370,7 +402,7 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 				const commentToReveal = element instanceof ResourceWithCommentThreads ? element.commentThreads[0].comment.uniqueIdInThread : element.comment.uniqueIdInThread;
 				if (threadToReveal && isCodeEditor(editor)) {
 					const controller = CommentController.get(editor);
-					controller?.revealCommentThread(threadToReveal, commentToReveal, true);
+					controller?.revealCommentThread(threadToReveal, commentToReveal, true, !preserveFocus);
 				}
 
 				return true;
@@ -385,14 +417,14 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 			options: {
 				pinned: pinned,
 				preserveFocus: preserveFocus,
-				selection: range
+				selection: range ?? new Range(1, 1, 1, 1)
 			}
 		}, sideBySide ? SIDE_GROUP : ACTIVE_GROUP).then(editor => {
 			if (editor) {
 				const control = editor.getControl();
 				if (threadToReveal && isCodeEditor(control)) {
 					const controller = CommentController.get(control);
-					controller?.revealCommentThread(threadToReveal, commentToReveal.uniqueIdInThread, true);
+					controller?.revealCommentThread(threadToReveal, commentToReveal.uniqueIdInThread, true, !preserveFocus);
 				}
 			}
 		});
@@ -424,7 +456,7 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 
 	private onAllCommentsChanged(e: IWorkspaceCommentThreadsEvent): void {
 		this.cachedFilterStats = undefined;
-		this.commentsModel.setCommentThreads(e.ownerId, e.commentThreads);
+		this.commentsModel.setCommentThreads(e.ownerId, e.ownerLabel, e.commentThreads);
 		this.totalComments += e.commentThreads.length;
 
 		let unresolved = 0;
@@ -458,6 +490,14 @@ export class CommentsPanel extends FilterViewPane implements ICommentsView {
 		if (didUpdate) {
 			this.refresh();
 		}
+	}
+
+	private onDataProviderDeleted(owner: string | undefined): void {
+		this.cachedFilterStats = undefined;
+		this.commentsModel.deleteCommentsByOwner(owner);
+
+		this.totalComments = 0;
+		this.refresh();
 	}
 
 	private updateSomeCommentsExpanded() {
