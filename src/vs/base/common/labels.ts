@@ -3,13 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { firstOrDefault } from 'vs/base/common/arrays';
-import { hasDriveLetter, toSlashes } from 'vs/base/common/extpath';
-import { posix, sep, win32 } from 'vs/base/common/path';
-import { isMacintosh, isWindows, OperatingSystem, OS } from 'vs/base/common/platform';
-import { extUri, extUriIgnorePathCase } from 'vs/base/common/resources';
-import { rtrim, startsWithIgnoreCase } from 'vs/base/common/strings';
-import { URI } from 'vs/base/common/uri';
+import { hasDriveLetter, toSlashes } from './extpath.js';
+import { posix, sep, win32 } from './path.js';
+import { isMacintosh, isWindows, OperatingSystem, OS } from './platform.js';
+import { extUri, extUriIgnorePathCase } from './resources.js';
+import { rtrim, startsWithIgnoreCase } from './strings.js';
+import { URI } from './uri.js';
 
 export interface IPathLabelFormatting {
 
@@ -99,7 +98,7 @@ function getRelativePathLabel(resource: URI, relativePathProvider: IRelativePath
 	const extUriLib = os === OperatingSystem.Linux ? extUri : extUriIgnorePathCase;
 
 	const workspace = relativePathProvider.getWorkspace();
-	const firstFolder = firstOrDefault(workspace.folders);
+	const firstFolder = workspace.folders.at(0);
 	if (!firstFolder) {
 		return undefined;
 	}
@@ -436,15 +435,17 @@ export function unmnemonicLabel(label: string): string {
 }
 
 /**
- * Splits a recent label in name and parent path, supporting both '/' and '\' and workspace suffixes
+ * Splits a recent label in name and parent path, supporting both '/' and '\' and workspace suffixes.
+ * If the location is remote, the remote name is included in the name part.
  */
-export function splitRecentLabel(recentLabel: string) {
+export function splitRecentLabel(recentLabel: string): { name: string; parentPath: string } {
 	if (recentLabel.endsWith(']')) {
 		// label with workspace suffix
 		const lastIndexOfSquareBracket = recentLabel.lastIndexOf(' [', recentLabel.length - 2);
 		if (lastIndexOfSquareBracket !== -1) {
 			const split = splitName(recentLabel.substring(0, lastIndexOfSquareBracket));
-			return { name: split.name, parentPath: split.parentPath + recentLabel.substring(lastIndexOfSquareBracket) };
+			const remoteNameWithSpace = recentLabel.substring(lastIndexOfSquareBracket);
+			return { name: split.name + remoteNameWithSpace, parentPath: split.parentPath };
 		}
 	}
 	return splitName(recentLabel);

@@ -11,13 +11,7 @@ declare module 'vscode' {
 	}
 
 	export interface SourceControlHistoryProvider {
-		actionButton?: SourceControlActionButton;
 		currentHistoryItemGroup?: SourceControlHistoryItemGroup;
-
-		/**
-		 * Fires when the action button changes
-		 */
-		onDidChangeActionButton: Event<void>;
 
 		/**
 		 * Fires when the current history item group changes after
@@ -26,31 +20,29 @@ declare module 'vscode' {
 		onDidChangeCurrentHistoryItemGroup: Event<void>;
 
 		/**
-		 * Fires when the history item groups change (ex: commit, push, fetch)
+		 * Fires when history item refs change
 		 */
-		// onDidChangeHistoryItemGroups: Event<SourceControlHistoryChangeEvent>;
+		onDidChangeHistoryItemRefs: Event<SourceControlHistoryItemRefsChangeEvent>;
 
-		provideHistoryItems(historyItemGroupId: string, options: SourceControlHistoryOptions, token: CancellationToken): ProviderResult<SourceControlHistoryItem[]>;
-		provideHistoryItemChanges(historyItemId: string, token: CancellationToken): ProviderResult<SourceControlHistoryItemChange[]>;
+		provideHistoryItemRefs(token: CancellationToken): ProviderResult<SourceControlHistoryItemRef[]>;
+		provideHistoryItems(options: SourceControlHistoryOptions, token: CancellationToken): ProviderResult<SourceControlHistoryItem[]>;
+		provideHistoryItemChanges(historyItemId: string, historyItemParentId: string | undefined, token: CancellationToken): ProviderResult<SourceControlHistoryItemChange[]>;
 
-		resolveHistoryItemGroupBase(historyItemGroupId: string, token: CancellationToken): ProviderResult<SourceControlHistoryItemGroup | undefined>;
-		resolveHistoryItemGroupCommonAncestor(historyItemGroupId1: string, historyItemGroupId: string, token: CancellationToken): ProviderResult<{ id: string; ahead: number; behind: number }>;
+		resolveHistoryItemRefsCommonAncestor(historyItemRefs: string[], token: CancellationToken): ProviderResult<string>;
 	}
 
 	export interface SourceControlHistoryOptions {
-		readonly cursor?: string;
+		readonly skip?: number;
 		readonly limit?: number | { id?: string };
+		readonly historyItemRefs?: readonly string[];
 	}
 
 	export interface SourceControlHistoryItemGroup {
 		readonly id: string;
-		readonly label: string;
-		readonly upstream?: SourceControlRemoteHistoryItemGroup;
-	}
-
-	export interface SourceControlRemoteHistoryItemGroup {
-		readonly id: string;
-		readonly label: string;
+		readonly name: string;
+		readonly revision?: string;
+		readonly base?: Omit<Omit<SourceControlHistoryItemGroup, 'base'>, 'remote'>;
+		readonly remote?: Omit<Omit<SourceControlHistoryItemGroup, 'base'>, 'remote'>;
 	}
 
 	export interface SourceControlHistoryItemStatistics {
@@ -62,11 +54,21 @@ declare module 'vscode' {
 	export interface SourceControlHistoryItem {
 		readonly id: string;
 		readonly parentIds: string[];
-		readonly label: string;
-		readonly description?: string;
-		readonly icon?: Uri | { light: Uri; dark: Uri } | ThemeIcon;
+		readonly message: string;
+		readonly displayId?: string;
+		readonly author?: string;
 		readonly timestamp?: number;
 		readonly statistics?: SourceControlHistoryItemStatistics;
+		readonly references?: SourceControlHistoryItemRef[];
+	}
+
+	export interface SourceControlHistoryItemRef {
+		readonly id: string;
+		readonly name: string;
+		readonly description?: string;
+		readonly revision?: string;
+		readonly category?: string;
+		readonly icon?: Uri | { light: Uri; dark: Uri } | ThemeIcon;
 	}
 
 	export interface SourceControlHistoryItemChange {
@@ -76,10 +78,9 @@ declare module 'vscode' {
 		readonly renameUri: Uri | undefined;
 	}
 
-	// export interface SourceControlHistoryChangeEvent {
-	// 	readonly added: Iterable<SourceControlHistoryItemGroup>;
-	// 	readonly removed: Iterable<SourceControlHistoryItemGroup>;
-	// 	readonly modified: Iterable<SourceControlHistoryItemGroup>;
-	// }
-
+	export interface SourceControlHistoryItemRefsChangeEvent {
+		readonly added: readonly SourceControlHistoryItemRef[];
+		readonly removed: readonly SourceControlHistoryItemRef[];
+		readonly modified: readonly SourceControlHistoryItemRef[];
+	}
 }

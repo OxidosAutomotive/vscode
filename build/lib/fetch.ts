@@ -42,11 +42,11 @@ export function fetchUrls(urls: string[] | string, options: IFetchOptions): es.T
 }
 
 export async function fetchUrl(url: string, options: IFetchOptions, retries = 10, retryDelay = 1000): Promise<VinylFile> {
-	const verbose = !!options.verbose ?? (!!process.env['CI'] || !!process.env['BUILD_ARTIFACTSTAGINGDIRECTORY']);
+	const verbose = !!options.verbose || !!process.env['CI'] || !!process.env['BUILD_ARTIFACTSTAGINGDIRECTORY'];
 	try {
 		let startTime = 0;
 		if (verbose) {
-			log(`Start fetching ${ansiColors.magenta(url)}${retries !== 10 ? `(${10 - retries} retry}` : ''}`);
+			log(`Start fetching ${ansiColors.magenta(url)}${retries !== 10 ? ` (${10 - retries} retry)` : ''}`);
 			startTime = new Date().getTime();
 		}
 		const controller = new AbortController();
@@ -81,7 +81,11 @@ export async function fetchUrl(url: string, options: IFetchOptions, retries = 10
 					contents
 				});
 			}
-			throw new Error(`Request ${ansiColors.magenta(url)} failed with status code: ${response.status}`);
+			let err = `Request ${ansiColors.magenta(url)} failed with status code: ${response.status}`;
+			if (response.status === 403) {
+				err += ' (you may be rate limited)';
+			}
+			throw new Error(err);
 		} finally {
 			clearTimeout(timeout);
 		}

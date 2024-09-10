@@ -11,8 +11,6 @@ const promises_1 = require("node:stream/promises");
 const yauzl = require("yauzl");
 const crypto = require("crypto");
 const retry_1 = require("./retry");
-const storage_blob_1 = require("@azure/storage-blob");
-const mime = require("mime");
 const cosmos_1 = require("@azure/cosmos");
 const identity_1 = require("@azure/identity");
 const cp = require("child_process");
@@ -43,6 +41,9 @@ class Temp {
         }
     }
 }
+function isCreateProvisionedFilesErrorResponse(response) {
+    return response?.ErrorDetails?.Code !== undefined;
+}
 class ProvisionService {
     log;
     accessToken;
@@ -65,6 +66,10 @@ class ProvisionService {
         });
         this.log(`Provisioning ${fileName} (releaseId: ${releaseId}, fileId: ${fileId})...`);
         const res = await (0, retry_1.retry)(() => this.request('POST', '/api/v2/ProvisionedFiles/CreateProvisionedFiles', { body }));
+        if (isCreateProvisionedFilesErrorResponse(res) && res.ErrorDetails.Code === 'FriendlyFileNameAlreadyProvisioned') {
+            this.log(`File already provisioned (most likley due to a re-run), skipping: ${fileName}`);
+            return;
+        }
         if (!res.IsSuccess) {
             throw new Error(`Failed to submit provisioning request: ${JSON.stringify(res.ErrorDetails)}`);
         }
@@ -80,8 +85,10 @@ class ProvisionService {
             }
         };
         const res = await fetch(`https://dsprovisionapi.microsoft.com${url}`, opts);
-        if (!res.ok || res.status < 200 || res.status >= 500) {
-            throw new Error(`Unexpected status code: ${res.status}`);
+        // 400 normally means the request is bad or something is already provisioned, so we will return as retries are useless
+        // Otherwise log the text body and headers. We do text because some responses are not JSON.
+        if ((!res.ok || res.status < 200 || res.status >= 500) && res.status !== 400) {
+            throw new Error(`Unexpected status code: ${res.status}\nResponse Headers: ${JSON.stringify(res.headers)}\nBody Text: ${await res.text()}`);
         }
         return await res.json();
     }
@@ -333,10 +340,11 @@ async function downloadArtifact(artifact, downloadPath) {
 }
 async function unzip(packagePath, outputPath) {
     return new Promise((resolve, reject) => {
-        yauzl.open(packagePath, { lazyEntries: true }, (err, zipfile) => {
+        yauzl.open(packagePath, { lazyEntries: true, autoClose: true }, (err, zipfile) => {
             if (err) {
                 return reject(err);
             }
+            const result = [];
             zipfile.on('entry', entry => {
                 if (/\/$/.test(entry.fileName)) {
                     zipfile.readEntry();
@@ -350,20 +358,21 @@ async function unzip(packagePath, outputPath) {
                         fs.mkdirSync(path.dirname(filePath), { recursive: true });
                         const ostream = fs.createWriteStream(filePath);
                         ostream.on('finish', () => {
-                            zipfile.close();
-                            resolve(filePath);
+                            result.push(filePath);
+                            zipfile.readEntry();
                         });
                         istream?.on('error', err => reject(err));
                         istream.pipe(ostream);
                     });
                 }
             });
+            zipfile.on('close', () => resolve(result));
             zipfile.readEntry();
         });
     });
 }
 // Contains all of the logic for mapping details to our actual product names in CosmosDB
-function getPlatform(product, os, arch, type) {
+function getPlatform(product, os, arch, type, isLegacy) {
     switch (os) {
         case 'win32':
             switch (product) {
@@ -380,14 +389,8 @@ function getPlatform(product, os, arch, type) {
                     }
                 }
                 case 'server':
-                    if (arch === 'arm64') {
-                        throw new Error(`Unrecognized: ${product} ${os} ${arch} ${type}`);
-                    }
                     return `server-win32-${arch}`;
                 case 'web':
-                    if (arch === 'arm64') {
-                        throw new Error(`Unrecognized: ${product} ${os} ${arch} ${type}`);
-                    }
                     return `server-win32-${arch}-web`;
                 case 'cli':
                     return `cli-win32-${arch}`;
@@ -414,9 +417,12 @@ function getPlatform(product, os, arch, type) {
                         case 'client':
                             return `linux-${arch}`;
                         case 'server':
-                            return `server-linux-${arch}`;
+                            return isLegacy ? `server-linux-legacy-${arch}` : `server-linux-${arch}`;
                         case 'web':
-                            return arch === 'standalone' ? 'web-standalone' : `server-linux-${arch}-web`;
+                            if (arch === 'standalone') {
+                                return 'web-standalone';
+                            }
+                            return isLegacy ? `server-linux-legacy-${arch}-web` : `server-linux-${arch}-web`;
                         default:
                             throw new Error(`Unrecognized: ${product} ${os} ${arch} ${type}`);
                     }
@@ -467,34 +473,9 @@ function getRealType(type) {
             return type;
     }
 }
-async function uploadAssetLegacy(log, quality, commit, filePath) {
-    const fileName = path.basename(filePath);
-    const blobName = commit + '/' + fileName;
-    const credential = new identity_1.ClientSecretCredential(e('AZURE_TENANT_ID'), e('AZURE_CLIENT_ID'), e('AZURE_CLIENT_SECRET'));
-    const blobServiceClient = new storage_blob_1.BlobServiceClient(`https://vscode.blob.core.windows.net`, credential, { retryOptions: { retryPolicyType: storage_blob_1.StorageRetryPolicyType.FIXED, tryTimeoutInMs: 2 * 60 * 1000 } });
-    const containerClient = blobServiceClient.getContainerClient(quality);
-    const blobClient = containerClient.getBlockBlobClient(blobName);
-    const blobOptions = {
-        blobHTTPHeaders: {
-            blobContentType: mime.lookup(filePath),
-            blobContentDisposition: `attachment; filename="${fileName}"`,
-            blobCacheControl: 'max-age=31536000, public'
-        }
-    };
-    log(`Checking for blob in Azure...`);
-    if (await blobClient.exists()) {
-        log(`Blob ${quality}, ${blobName} already exists, not publishing again.`);
-    }
-    else {
-        log(`Uploading blobs to Azure storage...`);
-        await blobClient.uploadFile(filePath, blobOptions);
-        log('Blob successfully uploaded to Azure storage.');
-    }
-    return `${e('AZURE_CDN_URL')}/${quality}/${blobName}`;
-}
 async function processArtifact(artifact, artifactFilePath) {
     const log = (...args) => console.log(`[${artifact.name}]`, ...args);
-    const match = /^vscode_(?<product>[^_]+)_(?<os>[^_]+)_(?<arch>[^_]+)_(?<unprocessedType>[^_]+)$/.exec(artifact.name);
+    const match = /^vscode_(?<product>[^_]+)_(?<os>[^_]+)(?:_legacy)?_(?<arch>[^_]+)_(?<unprocessedType>[^_]+)$/.exec(artifact.name);
     if (!match) {
         throw new Error(`Invalid artifact name: ${artifact.name}`);
     }
@@ -502,17 +483,15 @@ async function processArtifact(artifact, artifactFilePath) {
     const quality = e('VSCODE_QUALITY');
     const commit = e('BUILD_SOURCEVERSION');
     const { product, os, arch, unprocessedType } = match.groups;
-    const platform = getPlatform(product, os, arch, unprocessedType);
+    const isLegacy = artifact.name.includes('_legacy');
+    const platform = getPlatform(product, os, arch, unprocessedType, isLegacy);
     const type = getRealType(unprocessedType);
     const size = fs.statSync(artifactFilePath).size;
     const stream = fs.createReadStream(artifactFilePath);
-    const [sha1hash, sha256hash] = await Promise.all([hashStream('sha1', stream), hashStream('sha256', stream)]);
-    const [assetUrl, prssUrl] = await Promise.all([
-        uploadAssetLegacy(log, quality, commit, artifactFilePath),
-        releaseAndProvision(log, e('RELEASE_TENANT_ID'), e('RELEASE_CLIENT_ID'), e('RELEASE_AUTH_CERT_SUBJECT_NAME'), e('RELEASE_REQUEST_SIGNING_CERT_SUBJECT_NAME'), e('PROVISION_TENANT_ID'), e('PROVISION_AAD_USERNAME'), e('PROVISION_AAD_PASSWORD'), commit, quality, artifactFilePath)
-    ]);
-    const asset = { platform, type, url: assetUrl, hash: sha1hash, mooncakeUrl: prssUrl, prssUrl, sha256hash, size, supportsFastUpdate: true };
-    log('Creating asset...', JSON.stringify(asset));
+    const [hash, sha256hash] = await Promise.all([hashStream('sha1', stream), hashStream('sha256', stream)]); // CodeQL [SM04514] Using SHA1 only for legacy reasons, we are actually only respecting SHA256
+    const url = await releaseAndProvision(log, e('RELEASE_TENANT_ID'), e('RELEASE_CLIENT_ID'), e('RELEASE_AUTH_CERT_SUBJECT_NAME'), e('RELEASE_REQUEST_SIGNING_CERT_SUBJECT_NAME'), e('PROVISION_TENANT_ID'), e('PROVISION_AAD_USERNAME'), e('PROVISION_AAD_PASSWORD'), commit, quality, artifactFilePath);
+    const asset = { platform, type, url, hash, sha256hash, size, supportsFastUpdate: true };
+    log('Creating asset...', JSON.stringify(asset, undefined, 2));
     await (0, retry_1.retry)(async (attempt) => {
         log(`Creating asset in Cosmos DB (attempt ${attempt})...`);
         const aadCredentials = new identity_1.ClientSecretCredential(e('AZURE_TENANT_ID'), e('AZURE_CLIENT_ID'), e('AZURE_CLIENT_SECRET'));
@@ -545,6 +524,9 @@ async function main() {
     }
     if (e('VSCODE_BUILD_STAGE_LINUX') === 'True') {
         stages.add('Linux');
+    }
+    if (e('VSCODE_BUILD_STAGE_LINUX_LEGACY_SERVER') === 'True') {
+        stages.add('LinuxLegacyServer');
     }
     if (e('VSCODE_BUILD_STAGE_ALPINE') === 'True') {
         stages.add('Alpine');
@@ -589,12 +571,8 @@ async function main() {
                 const downloadSpeedKBS = Math.round((archiveSize / 1024) / downloadDurationS);
                 console.log(`[${artifact.name}] Successfully downloaded after ${Math.floor(downloadDurationS)} seconds(${downloadSpeedKBS} KB/s).`);
             });
-            const artifactFilePath = await unzip(artifactZipPath, e('AGENT_TEMPDIRECTORY'));
-            const artifactSize = fs.statSync(artifactFilePath).size;
-            if (artifactSize !== Number(artifact.resource.properties.artifactsize)) {
-                console.log(`[${artifact.name}] Artifact size mismatch.Expected ${artifact.resource.properties.artifactsize}. Actual ${artifactSize} `);
-                throw new Error(`Artifact size mismatch.`);
-            }
+            const artifactFilePaths = await unzip(artifactZipPath, e('AGENT_TEMPDIRECTORY'));
+            const artifactFilePath = artifactFilePaths.filter(p => !/_manifest/.test(p))[0];
             processing.add(artifact.name);
             const promise = new Promise((resolve, reject) => {
                 const worker = new node_worker_threads_1.Worker(__filename, { workerData: { artifact, artifactFilePath } });
@@ -616,7 +594,7 @@ async function main() {
             operations.push({ name: artifact.name, operation });
             resultPromise = Promise.allSettled(operations.map(o => o.operation));
         }
-        await new Promise(c => setTimeout(c, 10000));
+        await new Promise(c => setTimeout(c, 10_000));
     }
     console.log(`Found all ${done.size + processing.size} artifacts, waiting for ${processing.size} artifacts to finish publishing...`);
     const artifactsInProgress = operations.filter(o => processing.has(o.name));
